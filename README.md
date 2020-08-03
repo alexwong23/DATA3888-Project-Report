@@ -42,11 +42,11 @@ Files
 2. Part2.Rmd - Estimating DSA (donor-specific HLA antibodies) Presence
    - Processing Eplet data
    - Stratified data by phenotype - age and gender
-     |   age   | gender | Class II eplet mismatches |
-     |  :---:  | :----: |  :---:  |
-     | '25-35' |  Male  | '< 30 ' |
-     | '36-45' | Female | '>= 30' |
-     | '46-55' |  ----  |  -----  |
+| age | gender | Class II eplet mismatches |
+| --- | --- | --- |
+| '25-35' | Male | '< 30 ' |
+| '36-45' | Female | '>= 30' |
+| '46-55' | --- | --- |
 
 3. Part3.Rmd - Predicting Operational Tolerance
    - Gene expression data on patients that were either tolerant or not
