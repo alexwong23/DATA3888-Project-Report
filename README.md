@@ -47,7 +47,7 @@ Files
    | --- | --- | --- |
    | '25-35' | Male | '< 30 ' |
    | '36-45' | Female | '>= 30' |
-   | '46-55' | --- | --- |
+   | '46-55' |  |  |
 
 3. Part3.Rmd - Predicting Operational Tolerance
    - Gene expression data on patients that were either tolerant or not
