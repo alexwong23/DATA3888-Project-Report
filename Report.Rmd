@@ -1,13 +1,13 @@
 ---
-title: Creating a Kidney Transplant *Risk Calculator* - Group 24
+title: Creating a Kidney Transplant Risk Calculator
 author:
-  - name: 480377616, 460352996, 470066919, 480145820, 480407614
+  - name: Alex Wong
 
 address:
-  - address: Word Count - 2998 words
+  - address: GitHub code repository is [here](https://github.sydney.edu.au/awon6941/DATA3888-Project-Report.git)
 
 
-lead_author_surname: 480377616 460352996 470066919 480145820 480407614
+lead_author_surname: Alex Wong
 
 
 abstract: |
@@ -43,7 +43,7 @@ skip_final_break: true
 # Optional: Bibliography 
 bibliography: pinp
 
-footer_contents: "Kidney Transplant *Risk Calculator* - Group 24"
+footer_contents: "Kidney Transplant *Risk Calculator*"
 
 # Produce a pinp document
 output: pinp::pinp
@@ -351,29 +351,6 @@ Finally, further study into operational tolerance (OT) may improve the validity 
 In conclusion, we believe the risk calculator will aid in the effective and accurate allocation of kidney donor organs to those needing the lifesaving treatment of transplantation. In particular, by predicting a patient’s graft outcome in terms of AR, OT, and estimated time until DSA appear (in relation to the sub-population corresponding to their phenotype), we hope that we can assist practitioners in their decision-making and make more informed choices in immunosuppressive prescriptions. 
 
 \newpage
-
-## Contribution Statement
-
-### Andrew Auwyang
-
-Andrew was responsible for designing both the initial ‘Project Plan’ presentation as well as parts of the final presentation. In terms of data analysis, Andrew worked collaboratively with Alex on the ‘Operational Tolerance’ component of the product – after Alex worked on processing the raw CEL files and matching gene symbols using the CDF, Andrew then initiated model selection, proposing to use penalised logistic regression methods to account for the large p small n situation. Furthermore, he also suggested the use of the Brier Score as metric to evaluate models for both Part 1 and Part 3 as a way to validate the results from the AUC. In terms of the Shiny application and report, Andrew was primarily responsible for designing the Shiny application interface (e.g. input and output presentation). After suggestions from Alex in using the ‘pinp is not PNAS’ format for the report, Andrew edited the design of the final report. For both the report and the presentation, Andrew talked about the data processing and model selection for Part 3, as well as discussing the objectives of the group’s product during the final presentation.
-
-### Niruth Bogahawatta
-
-For the DATA38888 project, Niruth contributed by building the second component of the Shiny app. This included working with the eplet data to plot a Kaplan-Meier curves which displayed the survival probability of a graft over time based on phenotypic data of the recipient and the potential number of mismatches. For the Shiny application, Niruth assisted in debugging and also worked on creating the ‘Information’ tab that describes the context of the product. His role during the presentation was explaining the methodology and steps which were used for Part 2 of the app, which was also followed in the final report for the project.
-
-### Johanna Jones
-
-Johanna contributed by organising the weekly meeting minute notes and organised the weekly progress slides for whenever the group met up on Mondays of each week. While Andrew, Eva and Niruth were building the three components of the product (i.e. the gene expression , eplet mismatches and immune suppression), Johanna conducted research on the effects of BMI, race, donor and recipient sex on the kidney allograft survival concerning. Johanna also did research concerning the survival statistics and the Kaplan-Meier curve. She found journal articles that supported the group’s findings and the researched statistical methods to analyse gene expression data. For the Shiny app, Johanna wrote the ‘Information’ tab which describes context of the app and how each component related to the shared decision-making target audience. Johanna’s role during the final presentation was to elicit the target audience, motivation, and the background for the project. Her contribution to the final report was that by writing the main aims and background, recommendations for future work and conclusion section.
-
-### Eva Pu
-
-Eva was responsible for making a risk calculator that predicts the risk of acute rejection given input of gene expression data (i.e. Part 1). After the three GSE datasets were joined, she performed appropriate transformations (e.g. log~2) and normalisations. She performed DEG analysis and feature selection, as well as comparing the performance of different machine learning models such as SVM and logistic regression. Eva was also responsible for completing the code for the technical deployment of the model in the Shiny app. This part of the app includes reading in raw files and performing the necessary pre-processing steps (e.g. converting Ensembl ID to official gene symbols if needed). Furthermore, she created the code needed to create alternative models on the spot if the input data is not suitable for the trained model (e.g. genes from input patient data does not match filtered genes used in the trained model). Eva also organised a meeting with Jean to gain feedback about our product, and passed this information to the group. She contributed to the presentation and reproducible report by providing by discussing the methods involved in the creation of Part 1 of the group’s product.
-
-### Alex Wong
-
-In the early weeks of the project, there was a need to merge the three gene expression datasets, GSE120396, GSE120649 and GSE131179, into one larger dataset. During this time, Alex performed some pre-processing on the given datasets and with the assistance of online guides, he was first able to convert the Ensembl IDs to official gene symbols for the GSE120649 and GSE131179 datasets. Following this, he performed left joins using common gene symbols to merge the datasets together. Alex was also responsible for proposing the idea of using immunosuppression reliance as another factor in describing predictive kidney allograft functioning. After finding a suitable dataset containing the gene expression for operationally tolerant and normal patients, Alex then processed the CEL file into a gene expression matrix using Bioconductor libraries. Some other contributions include basic formatting of the shiny app, proposing the reproducible report layout and structure, and researching the use of penalized regression models in our final model.
-
 
 ## Reference List
 

@@ -29,9 +29,21 @@ We believe the risk calculator will aid in the effective and accurate allocation
 
 Challenges & Learning Points
 -------------------
-1.
+1. Data processing
+   - gene expression matrices
+     - convert Ensembl IDs to official gene symbols
+     - joined multiple matrices by common gene symbols
+     - transformations (e.g. log~2) and normalisations
+   - CEL files - into a gene expression matrix
 
-2.
+2. Model selection
+   - use of penalised logistic regression methods to account for the large p small n situation
+   - use of the Brier Score as metric to evaluate models for both Part 1 and Part 3 as a way to validate the results from the AUC
+
+3. Shiny application
+   - Designing the interface
+   - Reading in raw files
+   - Create alternative models on the spot if the input data is not suitable for the trained model (e.g. genes from input patient data does not match filtered genes used in the trained model)
 
 Files
 -------------------
