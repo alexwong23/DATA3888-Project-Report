@@ -1,0 +1,515 @@
+---
+title: "PART 3 - Pre-processing and Model Selection Code"
+author: "Group 24"
+date: "27/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(class)
+library(cvTools)
+library(ggplot2)
+library(e1071)
+library(pheatmap)
+library(caret)
+library(survival)
+library(survminer)
+library(Hmisc)
+library(randomForestSRC)
+library(glmnet)
+library(limma)
+library(affy)
+library(oligo)
+library(pd.mogene.2.0.st)
+library(mogene20sttranscriptcluster.db)
+library(GEOquery)
+library(stringr)
+library(reshape2)
+library(edgeR)
+# GEOquery install details https://github.com/seandavi/GEOquery
+#if (!requireNamespace("BiocManager", quietly=TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("affy")
+#BiocManager::install("limma")
+#BiocManager::install("oligo")
+#BiocManager::install("pd.mogene.2.0.st")
+#BiocManager::install("mogene20sttranscriptcluster.db")
+library(GEOquery)
+library(R.utils)
+library(reshape2)
+library(ggplot2)
+library(tidyverse)
+library(limma)
+library(EnsDb.Hsapiens.v79)
+library(biomaRt)
+library(ggbiplot)
+library(factoextra)
+library(caret)
+library(glmnet)
+library(DESeq2)
+library(edgeR)
+library(DEFormats)
+library(ROCR)
+library(pROC)
+library(doParallel)
+library(foreach)
+library(DescTools)
+library(ggthemes)
+library(sjmisc)
+```
+
+### Immune Tolerance
+
+```{r tac_preprocessing, echo=FALSE, message=FALSE, warning=FALSE}
+gset <- getGEO("GSE22229", GSEMatrix =TRUE, getGPL=FALSE)
+gset222 <- gset$'GSE22229_series_matrix.txt.gz'
+
+
+rejection_status_gset222 <- gset222$characteristics_ch1.1
+rejection_status_gset222 <- unlist(lapply( strsplit(as.character(rejection_status_gset222), "phenotype: " ) , `[[` , 2)  )
+rejection_status_gset222 <- rejection_status_gset222[-c(47:58)]
+rejection_status_gset222 <-  rejection_status_gset222 %>% 
+  recode(
+    "Standard Immunotherapy" = "Immunotherapy"
+  )
+table(rejection_status_gset222)
+#saveRDS(rejection_status_gset222,file = "immune_status.rds")
+```
+
+```{r}
+
+datadir_gset = "data/GSE22229_RAW/" #setting the file location for individual patient data
+fileNames_gset <- list.files(datadir_gset) #extracting file name for patient data
+print(fileNames_gset[1:5])
+
+
+#for (files in fileNames_gset){
+  #gunzip(file.path(datadir_gset,files))
+#}
+```
+
+```{r tac_processing, echo=FALSE, message=FALSE, warning=FALSE}
+setwd("data/GSE22229_RAW/")
+celFiles <- list.celfiles()
+affyRaw <- read.celfiles(celFiles)
+eset <- rma(affyRaw) # normalise data, background correcting and calculating expression
+
+setwd("../../")
+write.exprs(eset,file="tolerance.txt")
+my_frame <- data.frame(exprs(eset))
+write.table(my_frame,file="tolerance.txt",sep="\t")
+tolerance = read.delim("tolerance.txt")
+tolerance_rn = rownames(tolerance)
+```
+
+
+```{r}
+gpl = read.delim("data/GPL570-55999.txt")
+gpl = unique(gpl)
+gpl_genes = gpl$Gene.Symbol #extract gene symbol
+tolerance_gene = tolerance %>% cbind(gpl_genes) #combine gene symbol to the dataframe
+tolerance_gene = tolerance_gene %>% group_by(gpl_genes) %>% mutate_each(funs(mean)) %>% distinct #average the duplicate gene rows
+
+
+gpl_genes_averaged = tolerance_gene$gpl_genes 
+rownames(tolerance_gene) = gpl_genes_averaged #setting rownames and gene names
+colnames(tolerance_gene) <- paste0("P", 1:ncol(tolerance_gene))
+
+#remove last column since it is a duplicate of the rownames
+tolerance_gene_final =  tolerance_gene[,1:(ncol(tolerance_gene)-13)]
+rownames(tolerance_gene_final) = gpl_genes_averaged
+
+
+#saveRDS(tolerance_gene_final, file = "tolerance_gene.rds")
+```
+
+## Pre-Processing
+
+```{r}
+immune_gene = tolerance_gene_final
+immune_status = rejection_status_gset222
+```
+
+```{r}
+#Check boxplot
+p <- ggplot(melt(immune_gene), aes(x=variable, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs (x = "patient", y = "expression value") + 
+  xlab("Patient")+
+  ylab("Normalised Expression Value (CPM)")+
+  ggtitle("Gene Expression across GSE22229 Patients")+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"))+
+    theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+ggsave("part3boxplot.png", plot = p)
+```
+
+# Selecting genes with reasonable CPM Counts
+```{r}
+dge_immune = DGEList(immune_gene, group = immune_status) #23519 genes initially
+
+#gene filtering
+kept_genes = filterByExpr(dge_immune, group = immune_status, min.count = 10)
+dge_immune = dge_immune[kept_genes,, keep.lib.size = FALSE]
+
+kept_genes = rownames(dge_immune)
+
+immune_gene_filter = immune_gene[kept_genes,]
+rownames(immune_gene_filter) = kept_genes
+```
+
+# Using multiple t-tests
+```{r}
+
+groupname <- factor(immune_status)
+design <- model.matrix(~ groupname + 0)
+
+fit <- lmFit(immune_gene_filter, design)
+cont.matrix <- makeContrasts(groupnameTolerant-groupnameImmunotherapy, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2)
+tT <- topTable(fit2, number  =100, sort.by = "P", adjust.method = "BH") #benjamini-hochberg correction
+
+genes_100 = rownames(tT)
+immune_gene_filter = immune_gene_filter[genes_100,] #filtering only the top 99 most significant genes as suggested from multiple testing
+rownames(immune_gene_filter) = genes_100
+
+
+```
+
+# Review paper by Massart et al. (2017)
+
+```{r}
+massart_genes = c("TCL1A", "MS4A1", "CD79B", "FCRL2", "ID3", "RFC4",
+                   "MS4A4A", "RAB40C", "CCL20", "MS4A1 (CD20)", "MTHFD2", "PARVG",
+                   "RAB30", "CD79B", "TCL1A", "FCRL1", "PNOC", "IGLL-1", "CD79A",
+                   "IGLL3", "RFC1", "RFC4")
+
+massart_genes = unique(massart_genes)
+massart_genes = massart_genes[which((massart_genes %in% rownames(immune_gene)))]
+immune_gene_massart = immune_gene[massart_genes,]
+rownames(immune_gene_massart) = massart_genes
+
+#any(massart_genes %in% rownames(immune_gene_filter))
+immune_gene_final = immune_gene_filter
+
+
+k = 0
+for (i in 1:length(massart_genes)){
+  if (massart_genes[i] %in% rownames(immune_gene_filter) == FALSE) {
+    immune_gene_final = rbind(immune_gene_final,immune_gene_massart[i,])
+    rownames(immune_gene_final)[length(rownames(immune_gene_final))] = massart_genes[i]
+    k = k+1
+  }
+  
+}
+k
+```
+
+```{r}
+immune_gene_final_edit = immune_gene_final
+
+immune_gene_final_edit$names = rownames(immune_gene_final_edit)
+
+
+for (i in 1:length(rownames(immune_gene_final_edit))){
+  if (str_contains(immune_gene_final_edit$names[i], "///") == TRUE){
+    first_string = strsplit(as.character(immune_gene_final_edit$names[i]), " ///" )[[1]][1]
+    immune_gene_final_edit$names[i] = as.character(first_string)
+  }
+} 
+
+immune_gene_final_edit = immune_gene_final_edit %>% group_by(names) %>% mutate_each(funs(mean)) %>% distinct #average the duplicate gene rows
+
+immune_gene_final_edit_names = as.vector(immune_gene_final_edit$names)
+immune_gene_final_edit = immune_gene_final_edit[,-ncol(immune_gene_final_edit)]
+rownames(immune_gene_final_edit) = immune_gene_final_edit_names
+#saveRDS(immune_gene_final_edit, "immune_gene_final_edit.RDS")
+
+```
+
+# Modelling
+
+```{r}
+set.seed(1)
+# Ridge regression, LASSO regression, and Elastic Net Regression
+
+immune_gene_trans = t(immune_gene_final_edit)
+X = as.matrix(immune_gene_trans)
+y = immune_status %>% recode(Tolerant = 0, Immunotherapy = 1)
+
+cvK = 5
+
+#Accuracy
+cv_50_ridge_acc = cv_50_lasso_acc = cv_50_elastic_acc = c()
+cv_ridge_acc = cv_lasso_acc = cv_elastic_acc = c()
+
+#Area under ROC curve
+cv_50_ridge_auc = cv_50_lasso_auc = cv_50_elastic_auc = c()
+cv_ridge_auc = cv_lasso_auc = cv_elastic_auc = c()
+
+#Brier Score
+cv_50_ridge_bs = cv_50_lasso_bs = cv_50_elastic_bs = c()
+cv_ridge_bs = cv_lasso_bs = cv_elastic_bs = c()
+
+n_simul = 50
+
+for (i in 1:n_simul){
+  
+  cvSets = cvTools::cvFolds(nrow(X), cvK)
+  cv_ridge_acc = cv_lasso_acc = cv_elastic_acc = c()
+  cv_ridge_auc = cv_lasso_auc = cv_elastic_auc = c()
+  cv_ridge_bs = cv_lasso_bs = cv_elastic_bs = c()
+
+  for (j in 1:cvK){
+    
+    test_id = cvSets$subsets[cvSets$which==j]
+    X_test = X[test_id,]
+    X_train = X[-test_id,]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+    
+    ## Ridge, LASSO and Elastic Net
+    
+      ### Finding best lambda value (the one that minimises CV error rate)
+    
+    ridge_lambda = cv.glmnet(X_train, y_train, alpha = 0, family = "binomial")
+    ridge_lambda = ridge_lambda$lambda.min
+    
+    lasso_lambda = cv.glmnet(X_train, y_train, alpha = 1, family = "binomial")
+    lasso_lambda = lasso_lambda$lambda.min
+    
+      ### Finding the best alpha and lambda value for elastic net regression
+    
+    elastic_alpha_search <- seq(0.1, 0.9, 0.05)
+    elastic_search <- foreach(i = elastic_alpha_search, .combine = rbind) %dopar% {
+    cv_elastic_search <- cv.glmnet(X_train, y_train, family = "binomial", nfold = 5, type.measure = "deviance", paralle = TRUE, alpha = i)
+  data.frame(cvm = cv_elastic_search$cvm[cv_elastic_search$lambda == cv_elastic_search$lambda.1se], lambda.1se = cv_elastic_search$lambda.1se, alpha = i)}
+    cv_elastic_param <- elastic_search[elastic_search$cvm == min(elastic_search$cvm), ]
+    
+    elastic_alpha = cv_elastic_param$alpha
+    elastic_lambda = cv_elastic_param$lambda.1se
+    
+  
+      ### Fitting the model
+    
+    ridge_model = glmnet(X_train, y_train, alpha = 0, lambda = ridge_lambda, family = "binomial")
+    
+    lasso_model = glmnet(X_train, y_train, alpha = 1, lambda = lasso_lambda, family = "binomial")
+    
+    elastic_model = glmnet(X_train, y_train, alpha = elastic_alpha, lambda = elastic_lambda, family = "binomial")
+    
+      ### Predicting on test data
+    
+    ridge_predict = as.vector(ridge_model %>% predict(X_test, type = "response"))
+    ridge_predict_binary = ifelse(ridge_predict %>% as.vector() > 0.5,1,0)
+    
+    lasso_predict = as.vector(lasso_model %>% predict(X_test, type = "response"))
+    lasso_predict_binary = ifelse(lasso_predict %>% as.vector() > 0.5,1,0)
+    
+    elastic_predict = as.vector(elastic_model %>% predict(X_test, type = "response"))
+    elastic_predict_binary = ifelse(elastic_predict %>% as.vector() > 0.5,1,0)
+      
+    # Accuracy
+    
+    ridge_tab = table(ridge_predict_binary, y_test)
+    cv_ridge_acc[j] = ridge_tab %>% diag %>% sum %>% `/`(length(y_test))
+    
+    lasso_tab = table(lasso_predict_binary, y_test)
+    cv_lasso_acc[j] = lasso_tab %>% diag %>% sum %>% `/`(length(y_test))
+    
+    elastic_tab = table(elastic_predict_binary, y_test)
+    cv_elastic_acc[j] = elastic_tab %>% diag %>% sum %>% `/`(length(y_test))
+    
+    
+    # Area under ROC Curve
+    if (length(unique(y_test)) >=2){
+    
+    
+    ridge_roc = roc(y_test, ridge_predict)
+    ridge_auc = as.numeric(auc(ridge_roc))
+    cv_ridge_auc = append(cv_ridge_acc, ridge_auc)
+    
+    lasso_roc = roc(y_test, lasso_predict)
+    lasso_auc = as.numeric(auc(lasso_roc))
+    cv_lasso_auc = append(cv_lasso_acc, lasso_auc)
+    
+    elastic_roc = roc(y_test, elastic_predict)
+    elastic_auc = as.numeric(auc(elastic_roc))
+    cv_elastic_auc = append(cv_elastic_acc, elastic_auc)
+    
+    }
+    
+    # Brier Score
+    
+    ridge_brier = BrierScore(pred = ridge_predict, resp = y_test)
+    cv_ridge_bs = append(cv_ridge_bs, ridge_brier)
+    
+    lasso_brier = BrierScore(pred = lasso_predict, resp = y_test)
+    cv_lasso_bs = append(cv_lasso_bs, lasso_brier)
+    
+    elastic_brier = BrierScore(pred = elastic_predict, resp = y_test)
+    cv_elastic_bs = append(cv_elastic_bs, elastic_brier)
+  }
+  
+  #Ridge
+  cv_50_ridge_acc = append(cv_50_ridge_acc, mean(cv_ridge_acc))
+  cv_50_ridge_auc = append(cv_50_ridge_auc, mean(cv_ridge_auc))
+  cv_50_ridge_bs = append(cv_50_ridge_bs, mean(cv_ridge_bs))
+  
+  #LASSO
+  cv_50_lasso_acc = append(cv_50_lasso_acc, mean(cv_lasso_acc))
+  cv_50_lasso_auc = append(cv_50_lasso_auc, mean(cv_lasso_auc))
+  cv_50_lasso_bs = append(cv_50_lasso_bs, mean(cv_lasso_bs))
+  
+  #Elastic Net
+  cv_50_elastic_acc = append(cv_50_elastic_acc, mean(cv_elastic_acc))
+  cv_50_elastic_auc = append(cv_50_elastic_auc, mean(cv_elastic_auc))
+  cv_50_elastic_bs = append(cv_50_elastic_bs, mean(cv_elastic_bs))
+}   
+    
+```
+
+```{r}
+# Making individual data frames
+
+cv_50_ridge_acc_df = data.frame(group = "Accuracy", value = cv_50_ridge_acc)
+cv_50_ridge_auc_df = data.frame(group = "AUC", value = cv_50_ridge_auc)
+cv_50_ridge_bs_df = data.frame(group = "Brier Score", value = cv_50_ridge_bs)
+
+ridge.data = rbind(cv_50_ridge_acc_df, cv_50_ridge_auc_df, cv_50_ridge_bs_df)
+
+ridge_boxplot <- ridge.data %>% 
+  ggplot(aes(x = group, y = value))+
+  geom_boxplot()+
+  theme_classic()+
+  ylab("Values/Scores")+
+  xlab("Evaluation Metric")+
+  ggtitle(paste("Ridge Logistic Regression Performance over 5-Fold CV - Part 3"))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+  geom_jitter(width=0.10, size = 3, colour = "darkblue")+
+  theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+ridge_boxplot = ridge_boxplot + facet_wrap(~group, scales = "free")+
+  theme(strip.text.x = element_text(size = 15))
+
+ggsave("part3ridge.png", plot = ridge_boxplot)
+```
+
+```{r}
+
+# Making individual data frames
+
+cv_50_lasso_acc_df = data.frame(group = "Accuracy", value = cv_50_lasso_acc)
+cv_50_lasso_auc_df = data.frame(group = "AUC", value = cv_50_lasso_auc)
+cv_50_lasso_bs_df = data.frame(group = "Brier Score", value = cv_50_lasso_bs)
+
+lasso.data = rbind(cv_50_lasso_acc_df, cv_50_lasso_auc_df, cv_50_lasso_bs_df)
+
+lasso_boxplot <- lasso.data %>% 
+  ggplot(aes(x = group, y = value))+
+  geom_boxplot()+
+  theme_classic()+
+  ylab("Values/Scores")+
+  xlab("Evaluation Metric")+
+  ggtitle(paste("LASSO Logistic Regression Performance over 5-Fold CV - Part 3"))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+  geom_jitter(width=0.10, size = 3, colour = "darkblue")+
+  theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+lasso_boxplot = lasso_boxplot + facet_wrap(~group, scales = "free")
+
+ggsave("part3lasso.png", plot = lasso_boxplot)
+```
+
+
+```{r}
+# Making individual data frames
+
+cv_50_elastic_acc_df = data.frame(group = "Accuracy", value = cv_50_elastic_acc)
+cv_50_elastic_auc_df = data.frame(group = "AUC", value = cv_50_elastic_auc)
+cv_50_elastic_bs_df = data.frame(group = "Brier Score", value = cv_50_elastic_bs)
+
+elastic.data = rbind(cv_50_elastic_acc_df, cv_50_elastic_auc_df, cv_50_elastic_bs_df)
+
+elastic_boxplot <- elastic.data %>% 
+  ggplot(aes(x = group, y = value))+
+  geom_boxplot()+
+  theme_classic()+
+  ylab("Values/Scores")+
+  xlab("Evaluation Metric")+
+  ggtitle(paste("Elastic Net Logistic Regression Performance over 5-Fold CV \n - Part 3"))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+  geom_jitter(width=0.10, size = 3, colour = "darkblue")+
+  theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+elastic_boxplot = elastic_boxplot + facet_wrap(~group, scales = "free")
+
+ggsave("part3elastic.png", plot = elastic_boxplot)
+```
+
+```{r}
+#saveRDS(elastic_model, "elastic_model_immune.RDS")
+```
+
+```{r}
+df_gauge_ot <- data.frame(matrix(nrow=2, ncol = 2))
+    names(df_gauge_ot) <- c("variable", "percentage")
+    df_gauge_ot$variable <- c("pop_risk", "pred_risk")
+    df_gauge_ot$percentage <- c(0.85, 0.68) #just putting some arbitrary value for an incoming dataset
+    
+    df_gauge_ot <- df_gauge_ot %>% mutate(group=ifelse(percentage <0.20, "green",
+                                     ifelse(percentage>=0.20 & percentage<0.70, "orange","red")),
+                        label=paste0(round(percentage*100), "%"),
+                        title=dplyr::recode(variable, `pop_risk`="Population Relying on Immunosuppression",
+                                            `pred_risk`="Patient's Reliance on Immunosuppression",
+                        ))
+    gauge_ot = ggplot(df_gauge_ot, aes(fill = group, ymax = percentage, ymin = 0, xmax = 2, xmin = 1)) +
+      geom_rect(aes(ymax=1, ymin=0, xmax=2, xmin=1), fill ="#ece8bd") +
+      geom_rect() + 
+      coord_polar(theta = "y",start=-pi/2) + xlim(c(0, 2)) + ylim(c(0,2)) +
+      geom_text(aes(x = 0, y = 0, label = label, colour=group), size=6.5) +
+      geom_text(aes(x=0.8, y=1.45, label=title), size=4.2) + 
+      facet_wrap(~title, ncol = 5) +
+      theme_void() +
+      scale_fill_manual(values = c("red"="#C9146C", "orange"="#DA9112", "green"="#129188")) +
+      scale_colour_manual(values = c("red"="#C9146C", "orange"="#DA9112", "green"="#129188")) +
+      theme(strip.background = element_blank(),
+            strip.text.x = element_blank()) +
+      guides(fill=FALSE) +
+      guides(colour=FALSE)+
+      ggtitle("Reliance on Immunosuppression")+
+      theme(plot.title = element_text(size=15, face="bold"))+
+      theme(plot.title = element_text(hjust = 0.5, colour = "dark blue")
+      )
+    
+ggsave("part3_gauge.png", plot = gauge_ot)
+```
+

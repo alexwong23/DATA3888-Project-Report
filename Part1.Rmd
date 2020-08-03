@@ -1,0 +1,676 @@
+---
+title: "PART 1  - Pre-processing and Model Selection Code"
+author: '480464352'
+date: "03/06/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(class)
+library(cvTools)
+library(ggplot2)
+library(e1071)
+library(pheatmap)
+library(caret)
+library(survival)
+library(survminer)
+library(Hmisc)
+library(randomForestSRC)
+library(glmnet)
+library(limma)
+library(affy)
+library(oligo)
+library(pd.mogene.2.0.st)
+library(mogene20sttranscriptcluster.db)
+library(GEOquery)
+library(stringr)
+library(reshape2)
+library(edgeR)
+# GEOquery install details https://github.com/seandavi/GEOquery
+#if (!requireNamespace("BiocManager", quietly=TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("affy")
+#BiocManager::install("limma")
+#BiocManager::install("oligo")
+#BiocManager::install("pd.mogene.2.0.st")
+#BiocManager::install("mogene20sttranscriptcluster.db")
+library(GEOquery)
+library(R.utils)
+library(reshape2)
+library(ggplot2)
+library(tidyverse)
+library(limma)
+library(EnsDb.Hsapiens.v79)
+library(biomaRt)
+library(ggbiplot)
+library(factoextra)
+library(caret)
+library(glmnet)
+library(DESeq2)
+library(edgeR)
+library(DEFormats)
+library(ROCR)
+library(pROC)
+library(doParallel)
+library(foreach)
+library(DescTools)
+library(ggthemes)
+library(sjmisc)
+```
+
+GSE179 Data
+
+```{r 179_get_data, echo=FALSE}
+gset <- getGEO("GSE131179", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL570", attr(gset, "names")) else idx <- 1
+
+gset179 <- gset$'GSE131179_series_matrix.txt.gz'
+print(gset179)
+varLabels(gset179)
+print(gset179$characteristics_ch1.1[1:10])
+
+rejection_status_gset179 <- gset179$characteristics_ch1.1
+rejection_status_gset179 <- unlist(lapply( strsplit(as.character(rejection_status_gset179), ": " ) , `[[` , 2)  )
+table(rejection_status_gset179)
+```
+
+```{r 179_preprocessing, echo=FALSE}
+datadir = "data/GSE131179_RAW/"
+fileNames <- list.files(datadir) # Read in the files
+#print(fileNames[1:5]) # Check files are correct
+
+# unzip
+#for (files in fileNames) {
+#  tryCatch({
+#    gunzip(file.path(datadir,files))
+#  }, error = function(e) e)
+#}
+
+# Read in all files to make a table
+gse_179 = c()
+fileNames <- list.files(datadir) # Read in the files
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse_179 <- cbind(gse_179, temptable[,2])
+  colnames(gse_179)[i] <- colnames(temptable)[2]
+}
+rownames(gse_179) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+
+dim(gse_179)
+#write.csv(gse_179, "GSE131179_expression_matrix.txt")
+```
+
+```{r 649_preprocessing, echo=FALSE}
+datadir = "data/GSE120649_RAW/"
+fileNames <- list.files(datadir) # Read in the files
+#print(fileNames[1:5]) # Check files are correct
+
+# unzip
+#for (files in fileNames) {
+#  tryCatch({
+#    gunzip(file.path(datadir,files))
+#  }, error = function(e) e)
+#}
+
+# Read in all files to make a table
+gse_649 = c()
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse_649 <- cbind(gse_649, temptable[,2])
+  colnames(gse_649)[i] <- colnames(temptable)[2]
+}
+rownames(gse_649) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+
+dim(gse_649)
+
+#write.csv(gse_649, "GSE120649_expression_matrix.txt")
+```
+
+```{r 2.2_patient_outcome, echo=FALSE}
+clinical_outcome <-getGEO("GSE120396")
+clinical_outcome <- clinical_outcome$GSE120396_series_matrix.txt.gz
+
+#featureNames(clinical_outcome)
+varLabels(clinical_outcome)
+#print(clinical_outcome$characteristics_ch1.1[1:10])
+
+rejection_status <- clinical_outcome$characteristics_ch1.1
+rejection_status <- unlist(lapply( strsplit(as.character(rejection_status), ": " ) , `[[` , 2)  )
+table(rejection_status)
+#table(clinical_outcome[["acr at 3m:ch1"]])
+```
+
+```{r 2.3, echo=FALSE}
+datadir = "data/GSE120396_RAW/"
+fileNames <- list.files(datadir) # Read in the files
+#print(fileNames[1:5]) # Check files are correct
+
+# unzip all the 88 files, IF they are zip files!
+#for (files in fileNames) {
+#  tryCatch({
+#    gunzip(file.path(datadir,files))
+#  }, error = function(e) e)
+#}
+
+# Read in all 88 files to make a table
+gse = c()
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse <- cbind(gse, temptable[,2])
+  colnames(gse)[i] <- colnames(temptable)[2]
+}
+rownames(gse) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+
+dim(gse)
+# save a copy of this processed dataset for future usage
+#write.csv(gse, "GSE120396_expression_matrix.txt")
+```
+
+```{r, echo=FALSE}
+gse_179 <- log2(gse_179 +1)
+rownames(gse_179) = sapply(strsplit(rownames(gse_179), ".", fixed=T), function(x) x[1])
+symbols <- select(EnsDb.Hsapiens.v79, key= as.character(rownames(gse_179)), columns=c("SYMBOL"), keytype="GENEID")
+
+#gse179<- readr::read_csv("C:/Users/Eva/Documents/data3888 labs/DATA3888/GSE131179_expression_matrix.txt")
+dfgse_179 = as.data.frame(gse_179)
+#colnames(dfgse_179)[1] <- "GENEID"
+#dfgse_179
+df_179_symbol <- merge(dfgse_179, symbols, by.x = 0, by.y = 'GENEID', all.x = TRUE)
+#df_179_symbol
+
+gse_396_179 <- merge(gse, df_179_symbol, by.x = 0, by.y = "SYMBOL", all.x = TRUE)
+#gse_396_179
+gene_symbols<- gse_396_179[,1]
+
+gse_396_179<- data.matrix(gse_396_179[ , !names(gse_396_179) %in% c("Row.names","Row.names.y")] )
+
+rownames(gse_396_179) <- gene_symbols
+chooseGenes <- which(!duplicated(rownames(gse_396_179)))
+gse_396_179 <- gse_396_179[chooseGenes,]
+
+#gse_396_179
+
+```
+
+
+```{r, echo=FALSE}
+
+#Joining gse649
+##1. preprocessing
+
+
+gse_649 <- cpm(gse_649)
+gse_649 <- log2(gse_649 + 1)
+#gse_649
+
+rownames(gse_649) = sapply(strsplit(rownames(gse_649), ".", fixed=T), function(x) x[1])
+
+library(EnsDb.Hsapiens.v79)
+symbols <- select(EnsDb.Hsapiens.v79, key= rownames(gse_649), columns=c("SYMBOL"), keytype="GENEID")
+
+dfgse_649 = as.data.frame(gse_649)
+df_649_symbol <- merge(dfgse_649, symbols, by.x = 0, by.y = 'GENEID', all.x = TRUE)
+```
+
+
+
+```{r}
+
+##2. joining
+
+gse_396_179_649 <- merge(gse_396_179, df_649_symbol, by.x = 0, by.y = "SYMBOL", all.x = TRUE)
+gse_396_179_649
+gene_symbol<- gse_396_179_649[,1]
+gene_symbol[1:5]
+gse_396_179_649 <- gse_396_179_649[,-1]
+library(dplyr)
+gse_396_179_649 <- gse_396_179_649 %>% dplyr:: select(-c(Row.names.y))
+gse_396_179_649<- data.matrix(gse_396_179_649)
+rownames(gse_396_179_649) <- gene_symbol  #making genes the row names
+chooseGenes <- which(!duplicated(rownames(gse_396_179_649)))
+gse_396_179_649 <- gse_396_179_649[chooseGenes,]
+gse_396_179_649 <- na.omit(gse_396_179_649)
+```
+
+
+
+```{r 649 outcome}
+#obtaining the outcome
+
+clinical_outcome <-getGEO("GSE120649")
+clinical_outcome_649 <- clinical_outcome$GSE120649_series_matrix.txt.gz
+clinical_outcome_649$description
+
+rejection_status_649 <- clinical_outcome_649$description
+#SGF: Stable graft function, others rejection
+
+rejection_status_649 <- ifelse(rejection_status_649 == "SGF", "No", "Yes")
+rejection_status_649
+
+rejection_status_179<- ifelse(rejection_status_gset179 == "Acute Cellular Rejection (ACR)", "Yes", "No")
+
+rejection_status_396_179_649 <- append(rejection_status, rejection_status_179)
+
+rejection_status_396_179_649 <- append(rejection_status_396_179_649, rejection_status_649)
+```
+
+
+
+```{r}
+#Making a DGEList object
+
+counts <- gse_396_179_649
+genes <- rownames(gse_396_179_649)
+individual_396_179_649 <- colnames(gse_396_179_649)
+samples <- data.frame(individual_396_179_649, rejection_status_396_179_649)
+
+library(edgeR)
+GSE396179649 <- DGEList(counts = counts, samples = samples, genes = genes)
+
+library(reshape2)
+library(ggplot2)
+bplot_1 <- ggplot(melt(GSE396179649$counts), aes(x=Var2, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs (x = "patient", y = "expression value") + 
+  xlab("Patient")+
+  ylab("Expression Value (CPM)")+
+  ggtitle("Gene Expression across GSE120396, GSE120649 and GSE131179")+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+    theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+ggsave("part1merged.png", plot = bplot_1)
+```
+
+
+```{r}
+#Saving the data
+#saveRDS(GSE396179649, "GSE396179649.Rds")
+#saveRDS(rejection_status_396_179_649, "rej_status_396179649.Rds")
+
+GSE = GSE396179649
+gse2 <- normalizeQuantiles(GSE$counts) #quantile-normalise straight away
+bplot_2 <- ggplot(melt(gse2), aes(x=Var2, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs (x = "patient", y = "expression value") + 
+  xlab("Patient")+
+  ylab("Normalised Expression Value (CPM)")+
+  ggtitle("Gene Expression across GSE120396, GSE120649 and GSE131179")+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+    theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+ggsave("part1merged_norm.png", plot = bplot_2)
+```
+
+```{r}
+groupname <- factor(rejection_status_396_179_649)
+design <- model.matrix(~ groupname + 0)
+fit<- lmFit(gse2,design)
+
+cont.matrix <- makeContrasts(groupnameYes-groupnameNo, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+efit <- eBayes(fit2)
+
+tT <- topTable(efit,  adjust.method = "fdr", number = Inf )
+tT
+sig.table <- as.data.frame(tT)
+sig.table
+
+gse <- gse2
+
+
+features = c()
+
+cvK = 5  # number of CV folds
+cv_50acc5_rf = cv_50fp_rf = cv_50fn_rf =  c()
+cv_acc_rf = cv_fp_rf = cv_fn_rf = c()
+acc_rf = acc_fp = c()
+
+n_sim = 10 ## number of repeats
+
+for (features in 5:120) {
+sig_genes <- as.array(rownames(sig.table[1:features,]))
+ind <- which(rownames(gse) %in% sig_genes)
+X = as.matrix(t(gse[ind,]))
+y <- ifelse(rejection_status_396_179_649=="Yes", 1,0)
+  print(features)
+  for (i in 1:n_sim) {
+
+   cvSets = cvTools::cvFolds(nrow(X), cvK)  # permute all the data, into 5 folds
+   cv_acc_rf = cv_fp_rf = cv_fn_rf = c()
+   
+  for (j in 1:cvK) {
+    test_id = cvSets$subsets[cvSets$which == j]
+    X_test = X[test_id, ]
+    X_train = X[-test_id, ]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+     ## glm
+     ## glmnet model
+cv.rid <- glmnet(X_train, y_train, lambda = 0.01,  family = "binomial")
+predd <- predict(cv.rid, X_test, type="response")
+
+    cv_acc_rf[j] = table(round(predd), y_test) %>% diag %>% sum %>% `/`(length(y_test))
+    
+  }
+  
+    cv_50acc5_rf <- append(cv_50acc5_rf, mean(cv_acc_rf))
+   
+    
+} ## end for
+
+  acc_rf <- append(acc_rf,mean(cv_50acc5_rf))
+}
+
+#acc_rf
+
+features <- c(5:120)
+performance <- data.frame(x = features, acc_rf)
+performance2 <- gather(performance, performance, value, acc_rf, factor_key = TRUE)
+
+p1 <- performance %>% ggplot() + aes(x = features, y = acc_rf) + geom_line() + scale_x_continuous("Number of Features", labels = features[c(T,F,F)], breaks = features[c(T,F,F)]) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) + labs(title = "CV-Accuracy in AR Prediction under Different Number of Features", y = "CV-Accuracy")+
+  theme(plot.title = element_text(size=13, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"))+
+    theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+ggsave("part1features.png", plot = p1)
+```
+
+```{r}
+#Modelling
+n <- 100
+
+sig_genes <- as.array(rownames(sig.table[1:n,]))
+ind <- which(rownames(gse) %in% sig_genes)
+X = as.matrix(t(gse[ind,]))
+y = rejection_status_396_179_649
+
+X = as.matrix(t(gse[ind,]))
+y <- ifelse(rejection_status_396_179_649=="Yes", 1,0)
+
+cvK = 5
+set.seed(10)
+#Accuracy
+cv_50_ridge_acc = cv_50_lasso_acc = cv_50_elastic_acc = c()
+cv_ridge_acc = cv_lasso_acc = cv_elastic_acc = c()
+
+#Area under ROC curve
+cv_50_ridge_auc = cv_50_lasso_auc = cv_50_elastic_auc = c()
+cv_ridge_auc = cv_lasso_auc = cv_elastic_auc = c()
+
+#Brier Score
+cv_50_ridge_bs = cv_50_lasso_bs = cv_50_elastic_bs = c()
+cv_ridge_bs = cv_lasso_bs = cv_elastic_bs = c()
+
+n_simul = 50
+
+for (i in 1:n_simul){
+  
+  cvSets = cvTools::cvFolds(nrow(X), cvK)
+  cv_ridge_acc = cv_lasso_acc = cv_elastic_acc = c()
+  cv_ridge_auc = cv_lasso_auc = cv_elastic_auc = c()
+  cv_ridge_bs = cv_lasso_bs = cv_elastic_bs = c()
+
+  for (j in 1:cvK){
+    
+    test_id = cvSets$subsets[cvSets$which==j]
+    X_test = X[test_id,]
+    X_train = X[-test_id,]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+    
+    ## Ridge, LASSO and Elastic Net
+    
+      ### Finding best lambda value (the one that minimises CV error rate)
+    
+    ridge_lambda = cv.glmnet(X_train, y_train, alpha = 0, family = "binomial")
+    ridge_lambda = ridge_lambda$lambda.min
+    
+    lasso_lambda = cv.glmnet(X_train, y_train, alpha = 1, family = "binomial")
+    lasso_lambda = lasso_lambda$lambda.min
+    
+      ### Finding the best alpha and lambda value for elastic net regression
+    
+    elastic_alpha_search <- seq(0.1, 0.9, 0.05)
+    elastic_search <- foreach(i = elastic_alpha_search, .combine = rbind) %dopar% {
+    cv_elastic_search <- cv.glmnet(X_train, y_train, family = "binomial", nfold = 5, type.measure = "deviance", paralle = TRUE, alpha = i)
+  data.frame(cvm = cv_elastic_search$cvm[cv_elastic_search$lambda == cv_elastic_search$lambda.1se], lambda.1se = cv_elastic_search$lambda.1se, alpha = i)}
+    cv_elastic_param <- elastic_search[elastic_search$cvm == min(elastic_search$cvm), ]
+    
+    elastic_alpha = cv_elastic_param$alpha
+    elastic_lambda = cv_elastic_param$lambda.1se
+    
+  
+      ### Fitting the model
+    
+    ridge_model = glmnet(X_train, y_train, alpha = 0, lambda = ridge_lambda, family = "binomial")
+    
+    lasso_model = glmnet(X_train, y_train, alpha = 1, lambda = lasso_lambda, family = "binomial")
+    
+    elastic_model = glmnet(X_train, y_train, alpha = elastic_alpha, lambda = elastic_lambda, family = "binomial")
+    
+      ### Predicting on test data
+    
+    ridge_predict = as.vector(ridge_model %>% predict(X_test, type = "response"))
+    ridge_predict_binary = ifelse(ridge_predict %>% as.vector() > 0.5,1,0)
+    
+    lasso_predict = as.vector(lasso_model %>% predict(X_test, type = "response"))
+    lasso_predict_binary = ifelse(lasso_predict %>% as.vector() > 0.5,1,0)
+    
+    elastic_predict = as.vector(elastic_model %>% predict(X_test, type = "response"))
+    elastic_predict_binary = ifelse(elastic_predict %>% as.vector() > 0.5,1,0)
+      
+    # Accuracy
+    
+    ridge_tab = table(ridge_predict_binary, y_test)
+    cv_ridge_acc[j] = ridge_tab %>% diag %>% sum %>% `/`(length(y_test))
+    
+    lasso_tab = table(lasso_predict_binary, y_test)
+    cv_lasso_acc[j] = lasso_tab %>% diag %>% sum %>% `/`(length(y_test))
+    
+    elastic_tab = table(elastic_predict_binary, y_test)
+    cv_elastic_acc[j] = elastic_tab %>% diag %>% sum %>% `/`(length(y_test))
+    
+    
+    # Area under ROC Curve
+    if (length(unique(y_test)) >=2){
+    
+    
+    ridge_roc = roc(y_test, ridge_predict)
+    ridge_auc = as.numeric(auc(ridge_roc))
+    cv_ridge_auc = append(cv_ridge_acc, ridge_auc)
+    
+    lasso_roc = roc(y_test, lasso_predict)
+    lasso_auc = as.numeric(auc(lasso_roc))
+    cv_lasso_auc = append(cv_lasso_acc, lasso_auc)
+    
+    elastic_roc = roc(y_test, elastic_predict)
+    elastic_auc = as.numeric(auc(elastic_roc))
+    cv_elastic_auc = append(cv_elastic_acc, elastic_auc)
+    
+    }
+    
+    # Brier Score
+    
+    ridge_brier = BrierScore(pred = ridge_predict, resp = y_test)
+    cv_ridge_bs = append(cv_ridge_bs, ridge_brier)
+    
+    lasso_brier = BrierScore(pred = lasso_predict, resp = y_test)
+    cv_lasso_bs = append(cv_lasso_bs, lasso_brier)
+    
+    elastic_brier = BrierScore(pred = elastic_predict, resp = y_test)
+    cv_elastic_bs = append(cv_elastic_bs, elastic_brier)
+  }
+  
+  #Ridge
+  cv_50_ridge_acc = append(cv_50_ridge_acc, mean(cv_ridge_acc))
+  cv_50_ridge_auc = append(cv_50_ridge_auc, mean(cv_ridge_auc))
+  cv_50_ridge_bs = append(cv_50_ridge_bs, mean(cv_ridge_bs))
+  
+  #LASSO
+  cv_50_lasso_acc = append(cv_50_lasso_acc, mean(cv_lasso_acc))
+  cv_50_lasso_auc = append(cv_50_lasso_auc, mean(cv_lasso_auc))
+  cv_50_lasso_bs = append(cv_50_lasso_bs, mean(cv_lasso_bs))
+  
+  #Elastic Net
+  cv_50_elastic_acc = append(cv_50_elastic_acc, mean(cv_elastic_acc))
+  cv_50_elastic_auc = append(cv_50_elastic_auc, mean(cv_elastic_auc))
+  cv_50_elastic_bs = append(cv_50_elastic_bs, mean(cv_elastic_bs))
+}   
+```
+
+```{r}
+# Making individual data frames
+
+cv_50_ridge_acc_df = data.frame(group = "Accuracy", value = cv_50_ridge_acc)
+cv_50_ridge_auc_df = data.frame(group = "AUC", value = cv_50_ridge_auc)
+cv_50_ridge_bs_df = data.frame(group = "Brier Score", value = cv_50_ridge_bs)
+
+ridge.data = rbind(cv_50_ridge_acc_df, cv_50_ridge_auc_df, cv_50_ridge_bs_df)
+
+ridge_boxplot <- ridge.data %>% 
+  ggplot(aes(x = group, y = value))+
+  geom_boxplot()+
+  theme_classic()+
+  ylab("Values/Scores")+
+  xlab("Evaluation Metric")+
+  ggtitle(paste("Ridge Logistic Regression Performance over 5-Fold CV - Part 1"))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+  geom_jitter(width=0.10, size = 3, colour = "darkblue")+
+  theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+ridge_boxplot = ridge_boxplot + facet_wrap(~group, scales = "free")+
+  theme(strip.text.x = element_text(size = 15))
+
+ggsave("part1ridge.png", plot = ridge_boxplot)
+```
+
+```{r}
+
+# Making individual data frames
+
+cv_50_lasso_acc_df = data.frame(group = "Accuracy", value = cv_50_lasso_acc)
+cv_50_lasso_auc_df = data.frame(group = "AUC", value = cv_50_lasso_auc)
+cv_50_lasso_bs_df = data.frame(group = "Brier Score", value = cv_50_lasso_bs)
+
+lasso.data = rbind(cv_50_lasso_acc_df, cv_50_lasso_auc_df, cv_50_lasso_bs_df)
+
+lasso_boxplot <- lasso.data %>% 
+  ggplot(aes(x = group, y = value))+
+  geom_boxplot()+
+  theme_classic()+
+  ylab("Values/Scores")+
+  xlab("Evaluation Metric")+
+  ggtitle(paste("LASSO Logistic Regression Performance over 5-Fold CV - Part 1"))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+  geom_jitter(width=0.10, size = 3, colour = "darkblue")+
+  theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+lasso_boxplot = lasso_boxplot + facet_wrap(~group, scales = "free")
+
+ggsave("part1lasso.png", plot = lasso_boxplot)
+```
+
+
+```{r}
+# Making individual data frames
+
+cv_50_elastic_acc_df = data.frame(group = "Accuracy", value = cv_50_elastic_acc)
+cv_50_elastic_auc_df = data.frame(group = "AUC", value = cv_50_elastic_auc)
+cv_50_elastic_bs_df = data.frame(group = "Brier Score", value = cv_50_elastic_bs)
+
+elastic.data = rbind(cv_50_elastic_acc_df, cv_50_elastic_auc_df, cv_50_elastic_bs_df)
+
+elastic_boxplot <- elastic.data %>% 
+  ggplot(aes(x = group, y = value))+
+  geom_boxplot()+
+  theme_classic()+
+  ylab("Values/Scores")+
+  xlab("Evaluation Metric")+
+  ggtitle(paste("Elastic Net Logistic Regression Performance over 5-Fold CV \n - Part 1"))+
+  theme(plot.title = element_text(size=15, face="bold"))+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  theme(axis.text=element_text(size=13),
+        axis.title=element_text(size=13,face="bold"))+
+  geom_jitter(width=0.10, size = 3, colour = "darkblue")+
+  theme(axis.title.x = element_text(colour = "firebrick", face = "bold"),
+          axis.title.y = element_text(colour = "darkblue", face = "bold"))
+
+elastic_boxplot = elastic_boxplot + facet_wrap(~group, scales = "free")
+
+ggsave("part1elastic.png", plot = elastic_boxplot)
+```
+
+```{r}
+ df_gauge_ar <- data.frame(matrix(nrow=2, ncol = 2))
+    names(df_gauge_ar) <- c("variable", "percentage")
+    df_gauge_ar$variable <- c("pop_risk", "pred_risk")
+    df_gauge_ar$percentage <- c(0.38, 0.77) #just putting some arbitrary value for an incoming dataset
+    
+    df_gauge_ar <- df_gauge_ar %>% mutate(group=ifelse(percentage <0.28, "green",
+                                     ifelse(percentage>=0.28 & percentage<0.48, "orange","red")),
+                        label=paste0(round(percentage*100), "%"),
+                        title=dplyr::recode(variable, `pop_risk`="Population Risk of Acute Rejection",
+                                            `pred_risk`="Patient's Risk of Acute Rejection",
+                        ))
+   gauge_ar =  ggplot(df_gauge_ar, aes(fill = group, ymax = percentage, ymin = 0, xmax = 2, xmin = 1)) +
+      geom_rect(aes(ymax=1, ymin=0, xmax=2, xmin=1), fill ="#ece8bd") +
+      geom_rect() + 
+      coord_polar(theta = "y",start=-pi/2) + xlim(c(0, 2)) + ylim(c(0,2)) +
+      geom_text(aes(x = 0, y = 0, label = label, colour=group), size=6.5) +
+      geom_text(aes(x=0.8, y=1.45, label=title), size=4.2) + 
+      facet_wrap(~title, ncol = 5) +
+      theme_void() +
+      scale_fill_manual(values = c("red"="#C9146C", "orange"="#DA9112", "green"="#129188")) +
+      scale_colour_manual(values = c("red"="#C9146C", "orange"="#DA9112", "green"="#129188")) +
+      theme(strip.background = element_blank(),
+            strip.text.x = element_blank()) +
+      guides(fill=FALSE) +
+      guides(colour=FALSE)+
+      ggtitle("Risk of Acute Rejection")+
+      theme(plot.title = element_text(size=15, face="bold"))+
+      theme(plot.title = element_text(hjust = 0.5, colour = "dark blue")
+      )
+    
+ggsave("part1_gauge.png", plot = gauge_ar)
+```
+

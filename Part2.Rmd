@@ -1,0 +1,175 @@
+---
+title: "PART 2 - Pre-Processing Code"
+author: '480316176'
+date: "13/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=FALSE}
+library(tidyverse)
+library(class)
+library(cvTools)
+library(ggplot2)
+library(e1071)
+library(pheatmap)
+library(caret)
+library(survival)
+library(survminer)
+library(Hmisc)
+library(randomForestSRC)
+library(glmnet)
+library(dummies)
+```
+
+
+```{r}
+#Reading in the data
+eplets_data <- read.csv("data/Merged_data_250719_final.csv")
+eplets_data[,'agetxn']<-round(eplets_data[,'agetxn'],0) #Rounding age
+eplets_data[,'recipient_bmi']<-round(eplets_data[,'recipient_bmi'],0)
+
+
+mm <- c("C2epletMM")
+pheno <- c("Sex_Cat","recipient_bmi","agetxn")
+names_outcomes2 <- c("C2dnDSA","C2daystodnDSA")
+
+
+id1 <- which(colnames(eplets_data) == "X4Q") 
+id2 <- which(colnames(eplets_data) == "X199T")  
+eplets <- eplets_data[,id1:id2] #all class2 eplets
+
+X_eplets <-eplets[,-which(colSums(eplets)==0)] #get rid of those with 0 eplet counts
+
+
+#standardization: scale function
+u_X_eplets_std <- scale(X_eplets)
+all_cov <- data.frame(u_X_eplets_std)
+colnames(all_cov)=c(colnames(X_eplets))
+
+
+P <- eplets_data[,pheno]
+Y <- eplets_data[,names_outcomes2]
+MM <- eplets_data[,mm]
+survdt=cbind.data.frame(all_cov,Y,P,MM)
+```
+
+
+```{r}
+survdt$C2daystodnDSA = survdt$C2daystodnDSA / 365
+
+survdt_m<-survdt
+
+survdt_m<- survdt_m %>% mutate(agetxn=case_when(
+  agetxn >= 25 & agetxn <= 35 ~ '25 - 35',
+  agetxn >= 36 & agetxn <= 45 ~ '36 - 45',
+  agetxn >= 46 & agetxn <= 55 ~ '46 - 55'
+))
+
+survdt_m <- survdt_m %>% mutate(recipient_bmi=case_when(
+  recipient_bmi >= 15 & recipient_bmi <= 20 ~ '15 - 20',
+  recipient_bmi >= 21 & recipient_bmi <= 25 ~ '21 - 25',
+  recipient_bmi > 25 ~ '> 25',
+))
+
+survdt_m <- survdt_m %>%  mutate(MM = case_when(
+  MM <= 30 ~ "<= 30 MM",
+  MM > 30 ~ "> 30 MM",
+))
+
+#Removing the individual eplet columns
+survdt_m = survdt_m[,-c(1:199)]
+
+#Removing columns with NA BMI values
+#na_index = which(apply(survdt_m, 1, function(x) any(is.na(x))) == TRUE)
+#survdt_m <- survdt_m[-na_index,]
+#dim(survdt_m)
+
+
+#Recoding the gender variable
+survdt_m$Sex_Cat = survdt_m$Sex_Cat %>% recode(
+  '0' = "Female",
+  '1' = "Male"
+)
+
+
+#Renaming the column names
+
+survdt_m = survdt_m %>% dplyr::rename(
+  Gender = Sex_Cat,
+  BMI = recipient_bmi,
+  Age = agetxn,
+  Eplet2MM = MM
+)
+
+#save(survdt_m, file = "survdt_m.Rdata")
+```
+
+```{r}
+user_survdt = survdt_m %>% dplyr::filter(
+  Gender == "Male",
+  Age == "46 - 55"
+)
+
+table(user_survdt$Eplet2MM, user_survdt$C2dnDSA)
+```
+
+```{r}
+user_kmcurve = survfit(
+  Surv(C2daystodnDSA, C2dnDSA) ~ Eplet2MM, data = user_survdt
+)
+
+ggsurv <- ggsurvplot(
+           user_kmcurve,                     # survfit object with calculated statistics.
+           risk.table = TRUE,       # show risk table.
+           pval = TRUE,             # show p-value of log-rank test.
+           palette = c("#E7B800", "#2E9FDF"),
+           caption = "Data Provided by Dr. Germain Wong (University of Sydney)",
+          ggtheme = theme_bw(), # customize plot and risk table with a theme.
+          risk.table.y.text.col = T,# colour risk table text annotations.
+          risk.table.height = 0.25, # the height of the risk table
+          risk.table.y.text = FALSE,# show bars instead of names in text annotations
+                                    # in legend of risk table.
+          surv.median.line = "hv",  # add the median survival pointer.
+          xlab = "Time (Years)",
+          ylab = "Estimated Probability",
+          subtitle = "Male: 45 - 55 y.o.",
+          title = "Estimated Probability for Class II de novo DSA Appearance",
+          font.title = c(16, "bold", "darkblue"),
+          font.x = c(14, "bold", "red"),
+          font.y = c(14, "bold", "darkred"),
+          font.tickslab = c(12, "bold"),
+          font.subtitle = c(12, "bold"),
+          legend = "top",
+          legend.title = "Donor Mismatches",
+          legend.labs = c(" < 30 Mismatches", " > 30 Mismatches")
+          
+   )
+
+
+
+ggsurv$plot = 
+  ggsurv$plot +
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(plot.subtitle = element_text(hjust = 0.5))
+
+ggsave("part2survival.png", plot = print(ggsurv))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
