@@ -4,7 +4,7 @@ author:
   - name: Alex Wong
 
 address:
-  - address: GitHub code repository is [here](https://github.sydney.edu.au/awon6941/DATA3888-Project-Report.git)
+  - address: GitHub code repository is [here](https://github.com/alexwong23/DATA3888-Project-Report.git)
 
 
 lead_author_surname: Alex Wong
